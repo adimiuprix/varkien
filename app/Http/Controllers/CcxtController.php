@@ -10,7 +10,7 @@ class CcxtController extends Controller
 {
     public function listExchanges(): JsonResponse
     {
-        $now = Carbon::now();
+        $now = Carbon::now('Asia/Jakarta');
         dd($now->toDateTimeString());
         return response()->json([
             'exchanges' => Exchange::$exchanges,
