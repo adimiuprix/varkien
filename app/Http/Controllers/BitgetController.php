@@ -70,8 +70,6 @@ class BitgetController extends Controller
                     'response' => $response,
                     'status' => $response->status(),
                     'data' => data_get($response, 'data'),
-                    'maker' => data_get($response, 'data.makerFeeRate'),
-                    'taker' => data_get($response, 'data.takerFeeRate'),
                 ]);
             }
 
