@@ -8,7 +8,6 @@ use App\Http\Controllers\BitgetController;
 use App\Http\Controllers\FormController;
 
 Route::get('/', [HomeController::class, 'index'])->name('homepage');
-Route::get('exchanges', [CcxtController::class, 'listExchanges'])->name('homepage');
 Route::get('akrobat', [Akrobat::class, 'binance']);
 Route::get('stime', [BitgetController::class, 'serverTime']);
 Route::get('trade-rate', [BitgetController::class, 'tradeRate']);
