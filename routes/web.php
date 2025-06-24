@@ -12,4 +12,4 @@ Route::get('akrobat', [Akrobat::class, 'binance']);
 Route::get('stime', [BitgetController::class, 'serverTime']);
 Route::get('trade-rate', [BitgetController::class, 'tradeRate']);
 Route::get('spot-record', [BitgetController::class, 'spotRecord']);
-Route::get('futures-record', [BitgetController::class, 'futuresRecord']);
+Route::get('future-record', [BitgetController::class, 'futureRecord']);
