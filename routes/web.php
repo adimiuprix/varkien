@@ -11,3 +11,4 @@ Route::get('exchanges', [CcxtController::class, 'listExchanges'])->name('homepag
 Route::get('akrobat', [Akrobat::class, 'binance']);
 Route::get('stime', [BitgetController::class, 'serverTime']);
 Route::get('trade-rate', [BitgetController::class, 'tradeRate']);
+Route::get('spot-record', [BitgetController::class, 'spotRecord']);

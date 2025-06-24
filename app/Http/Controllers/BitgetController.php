@@ -80,4 +80,53 @@ class BitgetController extends Controller
             return response()->json(['error' => 'Terjadi kesalahan'], 500);
         }
     }
+
+    public function spotRecord(Request $request)
+    {
+        $apiKey     = 'bg_fd76a0a9024313374466a07763bdbd14';
+        $apiSecret  = '1c6bde77c85ce625433ece5bee29fb0bc2c15f2087f54750abed9944a61b8784';
+        $passphrase = 'VeRTErveldSeNTiLsECR';
+        $baseUrl    = 'https://api.bitget.com';
+        $timestamp  = (string) round(microtime(true) * 1000);
+
+        $params = [
+            'startTime' => $request->get('startTime', 1686128558000),
+            'endTime'   => $request->get('endTime', 1686214958000),
+            'limit'     => $request->get('limit', 100),
+        ];
+
+        $queryString = http_build_query($params);
+        $requestPath = "/api/v2/tax/spot-record?$queryString";
+        $method      = 'GET';
+        $body        = '';
+
+        $preSign = $timestamp . strtoupper($method) . "/api/v2/tax/spot-record" . '?' . $queryString . $body;
+        $sign    = base64_encode(hash_hmac('sha256', $preSign, $apiSecret, true));
+
+        try {
+            $response = Http::withHeaders([
+                'ACCESS-KEY'       => $apiKey,
+                'ACCESS-SIGN'      => $sign,
+                'ACCESS-TIMESTAMP' => $timestamp,
+                'ACCESS-PASSPHRASE'=> $passphrase,
+                'Content-Type'     => 'application/json',
+                'locale'           => 'en-US',
+            ])->get($baseUrl . $requestPath);
+
+            if ($response->successful() && data_get($response, 'code') === '00000') {
+                return response()->json([
+                    'response' => $response,
+                    'status'   => $response->status(),
+                    'data'     => data_get($response, 'data'),
+                ]);
+            }
+
+            Log::warning('Gagal ambil spot record', ['status' => $response->status(), 'body' => $response->body()]);
+            return response()->json(['error' => 'Gagal ambil spot record'], 500);
+        } catch (\Throwable $e) {
+            Log::error('Error ambil spot record', ['message' => $e->getMessage()]);
+            return response()->json(['error' => 'Terjadi kesalahan'], 500);
+        }
+    }
+
 }
