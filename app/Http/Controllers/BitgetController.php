@@ -67,6 +67,8 @@ class BitgetController extends Controller
 
             if ($response->successful() && data_get($response, 'code') === '00000') {
                 return response()->json([
+                    'response' => $response,
+                    'status' => $response->status(),
                     'data' => data_get($response, 'data'),
                     'maker' => data_get($response, 'data.makerFeeRate'),
                     'taker' => data_get($response, 'data.takerFeeRate'),
