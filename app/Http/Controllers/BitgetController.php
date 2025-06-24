@@ -196,7 +196,7 @@ class BitgetController extends Controller
             'side'                      => $request->input('side', 'buy'),
             'orderType'                 => $request->input('orderType', 'market'),
             'force'                     => $request->input('force', 'gtc'),
-            'size'                      => $request->input('size', '130'),
+            'size'                      => $request->input('size', '130.00'),
             'clientOid'                 => $request->input('clientOid', uniqid()),
         ];
 
