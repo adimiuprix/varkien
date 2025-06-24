@@ -183,4 +183,53 @@ class BitgetController extends Controller
         }
     }
 
+    public function placeSpotOrder(Request $request)
+    {
+        $apiKey     = 'bg_fd76a0a9024313374466a07763bdbd14';
+        $apiSecret  = '1c6bde77c85ce625433ece5bee29fb0bc2c15f2087f54750abed9944a61b8784';
+        $passphrase = 'VeRTErveldSeNTiLsECR';
+        $baseUrl    = 'https://api.bitget.com';
+        $timestamp  = (string) round(microtime(true) * 1000);
+
+        $body = [
+            'symbol'                    => $request->input('symbol', 'AVAXUSDT'),
+            'side'                      => $request->input('side', 'buy'),
+            'orderType'                 => $request->input('orderType', 'market'),
+            'force'                     => $request->input('force', 'gtc'),
+            'size'                      => $request->input('size', '1.0'),
+            'clientOid'                 => $request->input('clientOid', uniqid()),
+        ];
+
+        $bodyJson   = json_encode($body, JSON_UNESCAPED_SLASHES);
+        $requestPath = '/api/v2/spot/trade/place-order';
+        $method      = 'POST';
+
+        $preSign = $timestamp . strtoupper($method) . $requestPath . $bodyJson;
+        $sign    = base64_encode(hash_hmac('sha256', $preSign, $apiSecret, true));
+
+        try {
+            $response = Http::withHeaders([
+                'ACCESS-KEY'        => $apiKey,
+                'ACCESS-SIGN'       => $sign,
+                'ACCESS-TIMESTAMP'  => $timestamp,
+                'ACCESS-PASSPHRASE' => $passphrase,
+                'locale'            => 'en-US',
+                'Content-Type'      => 'application/json',
+            ])->post($baseUrl . $requestPath, $body);
+
+            if ($response->successful() && data_get($response, 'code') === '00000') {
+                return response()->json([
+                    'response' => $response,
+                    'status'   => $response->status(),
+                    'data'     => data_get($response, 'data'),
+                ]);
+            }
+
+            Log::warning('Gagal place order', ['status' => $response->status(), 'body' => $response->body()]);
+            return response()->json(['error' => 'Gagal place order'], 500);
+        } catch (\Throwable $e) {
+            Log::error('Error place order', ['message' => $e->getMessage()]);
+            return response()->json(['error' => 'Terjadi kesalahan'], 500);
+        }
+    }
 }
