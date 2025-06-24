@@ -66,7 +66,11 @@ class BitgetController extends Controller
             ])->get($baseUrl . $requestPath);
 
             if ($response->successful() && data_get($response, 'code') === '00000') {
-                return response()->json();
+                return response()->json([
+                    'trade_rate' => data_get($response, 'data.tradeRate', 0),
+                    'symbol'     => $params['symbol'],
+                    'businessType' => $params['businessType'],
+                ]);
             }
 
             Log::warning('Gagal ambil trade rate', ['status' => $response->status(), 'body' => $response->body()]);
