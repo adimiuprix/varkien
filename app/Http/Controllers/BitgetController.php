@@ -44,7 +44,7 @@ class BitgetController extends Controller
 
         $params = [
             'symbol'       => $request->get('symbol', 'BTCUSDT'),
-            'businessType' => $request->get('businessType', 'mix'),
+            'businessType' => $request->get('businessType', 'spot'),
         ];
 
         $queryString = http_build_query($params);
