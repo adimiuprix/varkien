@@ -2,7 +2,6 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\HomeController;
-use App\Http\Controllers\CcxtController;
 use App\Http\Controllers\Akrobat;
 use App\Http\Controllers\BitgetController;
 use App\Http\Controllers\FormController;

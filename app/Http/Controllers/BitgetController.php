@@ -192,11 +192,11 @@ class BitgetController extends Controller
         $timestamp  = (string) round(microtime(true) * 1000);
 
         $body = [
-            'symbol'                    => $request->input('symbol', 'AVAXUSDT'),
+            'symbol'                    => $request->input('symbol', 'OASUSDT'),
             'side'                      => $request->input('side', 'buy'),
             'orderType'                 => $request->input('orderType', 'market'),
             'force'                     => $request->input('force', 'gtc'),
-            'size'                      => $request->input('size', '0.07'),
+            'size'                      => $request->input('size', '130.00000000'),
             'clientOid'                 => $request->input('clientOid', uniqid()),
         ];
 
