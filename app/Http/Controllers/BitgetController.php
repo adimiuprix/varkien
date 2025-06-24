@@ -90,8 +90,8 @@ class BitgetController extends Controller
         $timestamp  = (string) round(microtime(true) * 1000);
 
         $params = [
-            'startTime' => $request->get('startTime', 1686128558000),
-            'endTime'   => $request->get('endTime', 1686214958000),
+            'startTime' => $request->get('startTime', 1750368680),
+            'endTime'   => $request->get('endTime', 1750739480),
             'limit'     => $request->get('limit', 100),
         ];
 
