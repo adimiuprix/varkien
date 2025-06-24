@@ -226,10 +226,10 @@ class BitgetController extends Controller
             }
 
             Log::warning('Gagal place order', ['status' => $response->status(), 'body' => $response->body()]);
-            return response()->json(['error' => 'Gagal place order'], 500);
+            return response()->json(['error' => $response->body()], 500);
         } catch (\Throwable $e) {
             Log::error('Error place order', ['message' => $e->getMessage()]);
-            return response()->json(['error' => 'Terjadi kesalahan'], 500);
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 }
