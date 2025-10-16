@@ -72,9 +72,11 @@ class PustakaController extends Controller
 
     public function buangData(Request $request)
     {
-        $validated = $request->all();
+        $body = $request->all();
 
-        $body = $validated['body'];
+        if (!$body) {
+            return response()->json(['error' => 'body field is required'], 400);
+        }
 
         $filename = 'data/dump.json';
 
@@ -85,5 +87,4 @@ class PustakaController extends Controller
             'path' => Storage::path($filename)
         ]);
     }
-
 }
