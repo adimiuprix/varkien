@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Trade;
 use App\Models\Pustaka;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -72,11 +73,19 @@ class PustakaController extends Controller
 
     public function buangData(Request $request)
     {
-        if (!$data = $request->all()) {
+        if (!$data = $request->input('body')) {
             return response()->json(['error' => 'body field is required'], 400);
-        }
+        };
 
         Storage::put('data/dump.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        Trade::create([
+            'pair'          => $data['pair'],
+            'buy'           => $data['buy'],
+            'sell'          => $data['sell'],
+            'neutral'       => $data['neutral'],
+            'recomendation' => $data['recomendation'],
+        ]);
 
         return response()->json([
             'message' => 'Data berhasil disimpan.',
