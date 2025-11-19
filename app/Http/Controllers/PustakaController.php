@@ -72,19 +72,15 @@ class PustakaController extends Controller
 
     public function buangData(Request $request)
     {
-        $body = $request->all();
-
-        if (!$body) {
+        if (!$data = $request->all()) {
             return response()->json(['error' => 'body field is required'], 400);
         }
 
-        $filename = 'data/dump.json';
-
-        Storage::put($filename, json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        Storage::put('data/dump.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
         return response()->json([
             'message' => 'Data berhasil disimpan.',
-            'path' => Storage::path($filename)
+            'path' => Storage::path('data/dump.json')
         ]);
     }
 }
