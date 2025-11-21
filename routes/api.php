@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\TradeController;
 use App\Http\Controllers\PustakaController;
 
 Route::get('halo', function () {
@@ -12,3 +13,6 @@ Route::get('halo', function () {
 
 Route::apiResource('pustaka', PustakaController::class);
 Route::post('buang', [PustakaController::class, 'buangData']);
+Route::post('buang', [PustakaController::class, 'buangData']);
+
+Route::post('/signal', [TradeController::class, 'signalTrade']);
