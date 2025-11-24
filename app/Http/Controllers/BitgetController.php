@@ -183,7 +183,7 @@ class BitgetController extends Controller
         }
     }
 
-    public function placeSpotOrder(Request $request)
+    public function placeSpotOrder()
     {
         $apiKey     = 'bg_fd76a0a9024313374466a07763bdbd14';
         $apiSecret  = '1c6bde77c85ce625433ece5bee29fb0bc2c15f2087f54750abed9944a61b8784';
@@ -192,12 +192,12 @@ class BitgetController extends Controller
         $timestamp  = (string) round(microtime(true) * 1000);
 
         $body = [
-            'symbol'                    => $request->input('symbol', 'OASUSDT'),
-            'side'                      => $request->input('side', 'buy'),
-            'orderType'                 => $request->input('orderType', 'market'),
-            'force'                     => $request->input('force', 'gtc'),
-            'size'                      => $request->input('size', '3.50'),
-            'clientOid'                 => $request->input('clientOid', uniqid()),
+            'symbol'                    => 'TAOUSDT',
+            'side'                      => 'buy',
+            'orderType'                 => 'market',
+            'force'                     => 'gtc',
+            'size'                      => '3.50',
+            'clientOid'                 => uniqid(),
         ];
 
         $bodyJson   = json_encode($body, JSON_UNESCAPED_SLASHES);
@@ -225,7 +225,7 @@ class BitgetController extends Controller
                 ]);
             }
 
-            Log::warning('Gagal place order', ['status' => $response->status(), 'body' => $response->body()]);
+            Log::warning('Failed place order', $response->json());
             return response()->json(['error' => $response->body()], 500);
         } catch (\Throwable $e) {
             Log::error('Error place order', ['message' => $e->getMessage()]);
