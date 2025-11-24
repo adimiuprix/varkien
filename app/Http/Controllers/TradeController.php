@@ -29,14 +29,36 @@ class TradeController extends Controller
      */
     public function handleSignal(Request $request)
     {
+        // Support format lama dari Python (dengan wrapper "body")
+        $data = $request->input('body') ?? $request->all();
+        
+        // Normalisasi key "recomendation" (typo) ke "recommendation"
+        if (isset($data['recomendation']) && !isset($data['recommendation'])) {
+            $data['recommendation'] = $data['recomendation'];
+        }
+
         // Validasi request
-        $validated = $request->validate([
+        $validator = validator($data, [
             'pair' => 'required|string',
-            'recommendation' => 'required|string|in:BUY,SELL,STRONG BUY,STRONG SELL,NEUTRAL,HOLD',
+            'recommendation' => 'required|string',
             'price' => 'nullable|numeric',
             'timestamp' => 'nullable|integer',
         ]);
 
+        if ($validator->fails()) {
+            Log::warning('Validation failed', [
+                'errors' => $validator->errors(),
+                'data' => $data
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Validation failed',
+                'details' => $validator->errors()
+            ], 400);
+        }
+
+        $validated = $validator->validated();
         $pair = strtoupper($validated['pair']);
 
         // HANYA IZINKAN TAOUSDT
