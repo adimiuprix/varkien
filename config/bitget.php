@@ -39,7 +39,7 @@ return [
     */
 
     'pairs' => [
-        'DOGEUSDT' => [
+        'TAOUSDT' => [
             'min_size' => 3,
             'precision' => 1,
         ],
