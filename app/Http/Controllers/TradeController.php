@@ -245,9 +245,26 @@ class TradeController extends Controller
      */
     private function openPosition(string $pair, float $usdtBalance): array
     {
-        // Hitung size berdasarkan persentase USDT balance
-        $tradePercent = config('bitget.trade_percent', 95); // default 95% dari balance
-        $usdtToUse = ($usdtBalance * $tradePercent) / 100;
+        // Mode trading: 'percentage' atau 'fixed'
+        $tradeMode = config('bitget.trade_mode', 'fixed');
+        
+        if ($tradeMode === 'fixed') {
+            // Mode FIXED: Gunakan jumlah USDT tetap
+            $usdtToUse = config('bitget.trade_fixed_usdt', 2);
+            
+            // Validasi: pastikan balance cukup
+            if ($usdtBalance < $usdtToUse) {
+                return [
+                    'success' => false,
+                    'action' => 'open',
+                    'message' => "Insufficient USDT balance. Required: {$usdtToUse} USDT, Available: {$usdtBalance} USDT"
+                ];
+            }
+        } else {
+            // Mode PERCENTAGE: Gunakan persentase dari balance
+            $tradePercent = config('bitget.trade_percent', 95);
+            $usdtToUse = ($usdtBalance * $tradePercent) / 100;
+        }
 
         // Dapatkan harga terkini untuk estimasi
         $currentPrice = $this->getCurrentPrice($pair);
@@ -268,7 +285,7 @@ class TradeController extends Controller
             return [
                 'success' => false,
                 'action' => 'open',
-                'message' => "Calculated size too low. Min: {$minSize}, Calculated: {$size}"
+                'message' => "Calculated size too low. Min: {$minSize}, Calculated: {$size}. Try increasing trade_fixed_usdt or use higher balance."
             ];
         }
 

@@ -23,13 +23,19 @@ return [
     */
 
     // Pair yang diizinkan untuk trading (HANYA SATU PAIR)
-    'allowed_pair' => env('BITGET_ALLOWED_PAIR', 'ENAUSDT'),
+    'allowed_pair' => env('BITGET_ALLOWED_PAIR', 'TAOUSDT'),
 
-    // Persentase balance USDT yang digunakan untuk trading (1-100)
-    'trade_percent' => env('BITGET_TRADE_PERCENT', 30),
+    // Mode trading: 'percentage' atau 'fixed'
+    'trade_mode' => env('BITGET_TRADE_MODE', 'fixed'),
+
+    // Jika mode = 'percentage': Persentase balance USDT yang digunakan (1-100)
+    'trade_percent' => env('BITGET_TRADE_PERCENT', 95),
+
+    // Jika mode = 'fixed': Jumlah USDT tetap yang digunakan per order
+    'trade_fixed_usdt' => env('BITGET_TRADE_FIXED_USDT', 2),
 
     // Minimum balance USDT yang harus ada
-    'min_usdt_balance' => env('BITGET_MIN_USDT_BALANCE', 10),
+    'min_usdt_balance' => env('BITGET_MIN_USDT_BALANCE', 2),
 
     /*
     |--------------------------------------------------------------------------
@@ -42,9 +48,9 @@ return [
     */
 
     'pairs' => [
-        'ENAUSDT' => [
-            'min_size' => 1.50,
-            'precision' => 4,
+        'ENASDT' => [
+            'min_size' => 2.00,
+            'precision' => 4,         // 4 decimal places
         ],
     ],
 
