@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class TradeController extends Controller
 {
@@ -16,120 +17,276 @@ class TradeController extends Controller
 
     public function __construct()
     {
-        $this->apiKey     = env('BITGET_API_KEY');
-        $this->apiSecret  = env('BITGET_API_SECRET');
-        $this->passphrase = env('BITGET_PASSPHRASE');
-        $this->baseUrl    = rtrim(env('BITGET_BASE_URL', 'https://api.bitget.com'), '/');
-    }
-
-    public function handleSignal(Request $request)
-    {
-        $signal = $request->input('body');
-
-        if (!is_array($signal) || empty($signal['pair']) || empty($signal['recomendation'])) {
-            return response()->json(['error' => 'Invalid signal body'], 400);
-        }
-
-        $pair = strtoupper($signal['pair']);
-        $normalized = $this->normalizeRecommendation($signal['recomendation']);
-
-        // neutral → tidak ada aksi
-        if ($normalized === 'neutral') {
-            return response()->json(['message' => 'Signal neutral, no action'], 200);
-        }
-
-        try {
-            $coin = strtoupper(str_replace('USDT', '', $pair));
-            $available = $this->getAvailableBalance($coin); // float
-
-            // Jika ada posisi BUY (available > 0) dan signal = sell => close all then open sell (note: spot can't short)
-            if ($available > 0 && $normalized === 'sell') {
-                // close: sell all available
-                $closeBody = [
-                    'symbol'    => $pair,
-                    'side'      => 'sell',
-                    'orderType' => 'market',
-                    'force'     => 'gtc',
-                    'size'      => (string) $available,
-                    'clientOid' => uniqid('close_'),
-                ];
-
-                $closeResp = $this->executeOrder($closeBody);
-
-                if (! $this->isSuccess($closeResp)) {
-                    Log::warning('Failed to close position', ['pair' => $pair, 'resp' => $closeResp->body()]);
-                    return response()->json(['error' => 'Failed to close existing position', 'detail' => $closeResp->json()], 500);
-                }
-
-                // After closing, on SPOT typically you won't enter a sell (short) — skip opening sell unless you want to trade futures.
-                return response()->json([
-                    'message' => 'Position closed due to sell signal (spot). No short opened on spot.',
-                    'close' => $closeResp->json()
-                ], 200);
-            }
-
-            // If available == 0 and signal = sell -> nothing to close / skip
-            if ($available == 0 && $normalized === 'sell') {
-                return response()->json(['message' => 'No asset to sell on spot. Skipping.'], 200);
-            }
-
-            // If available > 0 and signal = buy -> already holding, skip buy
-            if ($available > 0 && $normalized === 'buy') {
-                return response()->json(['message' => 'Already holding asset. Skipping buy.'], 200);
-            }
-
-            // No position and signal = buy -> open buy
-            if ($available == 0 && $normalized === 'buy') {
-                $entrySize = $this->determineSize($pair, $normalized, $available);
-
-                if ($entrySize <= 0) {
-                    return response()->json(['error' => 'Entry size calculated zero'], 400);
-                }
-
-                $entryBody = [
-                    'symbol'    => $pair,
-                    'side'      => 'buy',
-                    'orderType' => 'market',
-                    'force'     => 'gtc',
-                    'size'      => (string) $entrySize,
-                    'clientOid' => uniqid('entry_'),
-                ];
-
-                $entryResp = $this->executeOrder($entryBody);
-
-                if (! $this->isSuccess($entryResp)) {
-                    Log::warning('Failed to place entry order', ['pair' => $pair, 'resp' => $entryResp->body()]);
-                    return response()->json(['error' => 'Failed to place entry order', 'detail' => $entryResp->json()], 500);
-                }
-
-                return response()->json([
-                    'message' => 'Buy order placed',
-                    'entry' => $entryResp->json()
-                ], 200);
-            }
-
-            // Fallback safety
-            return response()->json(['message' => 'No action taken'], 200);
-
-        } catch (\Throwable $e) {
-            Log::error('handleSignal error', ['message' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
-            return response()->json(['error' => 'Internal error', 'detail' => $e->getMessage()], 500);
-        }
-    }
-
-    private function normalizeRecommendation(string $rec): string
-    {
-        $r = strtoupper(trim($rec));
-        return match ($r) {
-            'BUY', 'STRONG BUY' => 'buy',
-            'SELL', 'STRONG SELL' => 'sell',
-            default => 'neutral',
-        };
+        $this->apiKey     = config('bitget.api_key');
+        $this->apiSecret  = config('bitget.api_secret');
+        $this->passphrase = config('bitget.passphrase');
+        $this->baseUrl    = rtrim(config('bitget.base_url', 'https://api.bitget.com'), '/');
     }
 
     /**
-     * Ambil available balance coin di Spot
-     * Mengembalikan float jumlah available coin (0.0 jika gagal)
+     * Endpoint untuk menerima signal dari server API
+     * POST /api/trade/signal
+     */
+    public function handleSignal(Request $request)
+    {
+        // Validasi request
+        $validated = $request->validate([
+            'pair' => 'required|string',
+            'recommendation' => 'required|string|in:BUY,SELL,STRONG BUY,STRONG SELL,NEUTRAL,HOLD',
+            'price' => 'nullable|numeric',
+            'timestamp' => 'nullable|integer',
+        ]);
+
+        $pair = strtoupper($validated['pair']);
+        $recommendation = $this->normalizeRecommendation($validated['recommendation']);
+
+        Log::info('Signal received', [
+            'pair' => $pair,
+            'recommendation' => $recommendation,
+            'raw' => $validated['recommendation']
+        ]);
+
+        // Skip jika neutral/hold
+        if (in_array($recommendation, ['neutral', 'hold'])) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Signal neutral/hold, no action taken',
+                'pair' => $pair
+            ], 200);
+        }
+
+        try {
+            // Ekstrak coin dari pair (misal: BTCUSDT -> BTC)
+            $coin = $this->extractCoin($pair);
+            
+            // Cek balance saat ini
+            $balance = $this->getAvailableBalance($coin);
+            $usdtBalance = $this->getAvailableBalance('USDT');
+
+            Log::info('Current balance', [
+                'coin' => $coin,
+                'balance' => $balance,
+                'usdt' => $usdtBalance
+            ]);
+
+            // Logic trading
+            return $this->executeTradingLogic($pair, $coin, $recommendation, $balance, $usdtBalance);
+
+        } catch (\Throwable $e) {
+            Log::error('handleSignal error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'pair' => $pair
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Internal error',
+                'detail' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Execute trading logic berdasarkan signal dan balance
+     */
+    private function executeTradingLogic(string $pair, string $coin, string $recommendation, float $balance, float $usdtBalance)
+    {
+        $actions = [];
+
+        // SELL SIGNAL
+        if ($recommendation === 'sell') {
+            if ($balance > 0) {
+                // Ada posisi, close semua
+                $closeResult = $this->closePosition($pair, $coin, $balance);
+                $actions[] = $closeResult;
+
+                if (!$closeResult['success']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to close position',
+                        'actions' => $actions
+                    ], 500);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Position closed successfully',
+                    'actions' => $actions
+                ], 200);
+            } else {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'No position to close',
+                    'pair' => $pair
+                ], 200);
+            }
+        }
+
+        // BUY SIGNAL
+        if ($recommendation === 'buy') {
+            if ($balance > 0) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Already holding position, skipping buy',
+                    'current_balance' => $balance
+                ], 200);
+            }
+
+            // Tidak ada posisi, buka posisi baru
+            if ($usdtBalance < config('bitget.min_usdt_balance', 10)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Insufficient USDT balance',
+                    'usdt_balance' => $usdtBalance
+                ], 400);
+            }
+
+            $buyResult = $this->openPosition($pair, $usdtBalance);
+            $actions[] = $buyResult;
+
+            if (!$buyResult['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to open position',
+                    'actions' => $actions
+                ], 500);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Position opened successfully',
+                'actions' => $actions
+            ], 200);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'No action taken'
+        ], 200);
+    }
+
+    /**
+     * Close posisi yang ada (SELL)
+     */
+    private function closePosition(string $pair, string $coin, float $balance): array
+    {
+        $minSize = $this->getMinOrderSize($pair);
+        
+        if ($balance < $minSize) {
+            return [
+                'success' => false,
+                'action' => 'close',
+                'message' => "Balance too low. Min: {$minSize}, Current: {$balance}"
+            ];
+        }
+
+        $orderBody = [
+            'symbol'    => $pair,
+            'side'      => 'sell',
+            'orderType' => 'market',
+            'force'     => 'gtc',
+            'size'      => $this->formatSize($balance, $pair),
+            'clientOid' => $this->generateClientOid('close'),
+        ];
+
+        $response = $this->executeOrder($orderBody);
+
+        return [
+            'success' => $this->isSuccess($response),
+            'action' => 'close',
+            'pair' => $pair,
+            'size' => $balance,
+            'response' => $response->json(),
+            'timestamp' => now()->toIso8601String()
+        ];
+    }
+
+    /**
+     * Open posisi baru (BUY)
+     */
+    private function openPosition(string $pair, float $usdtBalance): array
+    {
+        // Hitung size berdasarkan persentase USDT balance
+        $tradePercent = config('bitget.trade_percent', 95); // default 95% dari balance
+        $usdtToUse = ($usdtBalance * $tradePercent) / 100;
+
+        // Dapatkan harga terkini untuk estimasi
+        $currentPrice = $this->getCurrentPrice($pair);
+        
+        if (!$currentPrice) {
+            return [
+                'success' => false,
+                'action' => 'open',
+                'message' => 'Failed to get current price'
+            ];
+        }
+
+        // Hitung size coin yang akan dibeli
+        $size = $usdtToUse / $currentPrice;
+        $minSize = $this->getMinOrderSize($pair);
+
+        if ($size < $minSize) {
+            return [
+                'success' => false,
+                'action' => 'open',
+                'message' => "Calculated size too low. Min: {$minSize}, Calculated: {$size}"
+            ];
+        }
+
+        $orderBody = [
+            'symbol'    => $pair,
+            'side'      => 'buy',
+            'orderType' => 'market',
+            'force'     => 'gtc',
+            'size'      => $this->formatSize($size, $pair),
+            'clientOid' => $this->generateClientOid('open'),
+        ];
+
+        $response = $this->executeOrder($orderBody);
+
+        return [
+            'success' => $this->isSuccess($response),
+            'action' => 'open',
+            'pair' => $pair,
+            'size' => $size,
+            'usdt_used' => $usdtToUse,
+            'price' => $currentPrice,
+            'response' => $response->json(),
+            'timestamp' => now()->toIso8601String()
+        ];
+    }
+
+    /**
+     * Dapatkan harga terkini
+     */
+    private function getCurrentPrice(string $pair): ?float
+    {
+        try {
+            $cacheKey = "price_{$pair}";
+            
+            return Cache::remember($cacheKey, 5, function () use ($pair) {
+                $response = Http::get("{$this->baseUrl}/api/v2/spot/market/tickers", [
+                    'symbol' => $pair
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json('data');
+                    if (is_array($data) && count($data) > 0) {
+                        return (float) ($data[0]['lastPr'] ?? 0);
+                    }
+                }
+
+                return null;
+            });
+        } catch (\Throwable $e) {
+            Log::error('Failed to get current price', ['pair' => $pair, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Dapatkan available balance
      */
     private function getAvailableBalance(string $coin): float
     {
@@ -141,7 +298,7 @@ class TradeController extends Controller
         $preSign = $timestamp . strtoupper($method) . $requestPath . '?' . $query;
         $sign = base64_encode(hash_hmac('sha256', $preSign, $this->apiSecret, true));
 
-        $resp = Http::withHeaders([
+        $response = Http::withHeaders([
             'ACCESS-KEY'        => $this->apiKey,
             'ACCESS-SIGN'       => $sign,
             'ACCESS-TIMESTAMP'  => $timestamp,
@@ -149,18 +306,26 @@ class TradeController extends Controller
             'Content-Type'      => 'application/json',
         ])->get($this->baseUrl . $requestPath . '?' . $query);
 
-        if (! $resp->successful()) {
-            Log::warning('Balance check failed', ['coin' => $coin, 'resp' => $resp->body()]);
+        if (!$response->successful()) {
+            Log::warning('Balance check failed', [
+                'coin' => $coin,
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
             return 0.0;
         }
 
-        // Sesuaikan struktur jika API berbeda. Asumsi: data.available
-        return (float) ($resp->json('data.available') ?? 0.0);
+        $data = $response->json('data');
+        
+        if (is_array($data) && count($data) > 0) {
+            return (float) ($data[0]['available'] ?? 0.0);
+        }
+
+        return 0.0;
     }
 
     /**
-     * Execute order ke Bitget (POST)
-     * Mengembalikan Illuminate\Http\Client\Response
+     * Execute order
      */
     private function executeOrder(array $body): Response
     {
@@ -172,29 +337,114 @@ class TradeController extends Controller
         $preSign = $timestamp . strtoupper($method) . $requestPath . $bodyJson;
         $sign = base64_encode(hash_hmac('sha256', $preSign, $this->apiSecret, true));
 
-        return Http::withHeaders([
+        Log::info('Executing order', ['body' => $body]);
+
+        $response = Http::withHeaders([
             'ACCESS-KEY'        => $this->apiKey,
             'ACCESS-SIGN'       => $sign,
             'ACCESS-TIMESTAMP'  => $timestamp,
             'ACCESS-PASSPHRASE' => $this->passphrase,
             'Content-Type'      => 'application/json',
-        ])->withBody($bodyJson, 'application/json')->post($this->baseUrl . $requestPath);
+        ])->withBody($bodyJson, 'application/json')
+          ->post($this->baseUrl . $requestPath);
+
+        Log::info('Order response', [
+            'status' => $response->status(),
+            'body' => $response->json()
+        ]);
+
+        return $response;
     }
 
-    private function isSuccess(Response $resp): bool
+    /**
+     * Cek apakah response sukses
+     */
+    private function isSuccess(Response $response): bool
     {
-        if (! $resp->successful()) return false;
-        $code = $resp->json('code');
+        if (!$response->successful()) {
+            return false;
+        }
+
+        $code = $response->json('code');
         return ($code !== null && (string)$code === '00000');
     }
 
     /**
-     * Tentukan ukuran order. Saat ini fixed size; ubah sesuai strategi.
-     * Kamu bisa kembangkan: based on USDT balance, percent, or dynamic calc.
+     * Normalize recommendation
      */
-    private function determineSize(string $pair, string $action, float $available): float
+    private function normalizeRecommendation(string $rec): string
     {
-        // contoh sederhana: fixed size 1.0 (ubah sesuai kebutuhan)
-        return (float) env('TRADE_FIXED_SIZE', 1.0);
+        $normalized = strtoupper(trim($rec));
+        
+        return match ($normalized) {
+            'BUY', 'STRONG BUY' => 'buy',
+            'SELL', 'STRONG SELL' => 'sell',
+            'NEUTRAL', 'HOLD' => 'neutral',
+            default => 'neutral',
+        };
+    }
+
+    /**
+     * Extract coin dari pair
+     */
+    private function extractCoin(string $pair): string
+    {
+        return strtoupper(str_replace('USDT', '', $pair));
+    }
+
+    /**
+     * Generate unique client order ID
+     */
+    private function generateClientOid(string $prefix): string
+    {
+        return $prefix . '_' . time() . '_' . substr(uniqid(), -6);
+    }
+
+    /**
+     * Format size sesuai dengan presisi pair
+     */
+    private function formatSize(float $size, string $pair): string
+    {
+        // Default 8 decimal places, adjust per pair if needed
+        $precision = config("bitget.pairs.{$pair}.precision", 8);
+        return rtrim(rtrim(number_format($size, $precision, '.', ''), '0'), '.');
+    }
+
+    /**
+     * Dapatkan minimum order size
+     */
+    private function getMinOrderSize(string $pair): float
+    {
+        return config("bitget.pairs.{$pair}.min_size", 0.00001);
+    }
+
+    /**
+     * Endpoint untuk cek status bot
+     */
+    public function status()
+    {
+        return response()->json([
+            'status' => 'online',
+            'timestamp' => now()->toIso8601String(),
+            'config' => [
+                'base_url' => $this->baseUrl,
+                'api_key_configured' => !empty($this->apiKey),
+            ]
+        ]);
+    }
+
+    /**
+     * Endpoint untuk cek balance
+     */
+    public function balance(Request $request)
+    {
+        $coin = $request->input('coin', 'USDT');
+        $balance = $this->getAvailableBalance($coin);
+
+        return response()->json([
+            'coin' => $coin,
+            'available' => $balance,
+            'timestamp' => now()->toIso8601String()
+        ]);
     }
 }
