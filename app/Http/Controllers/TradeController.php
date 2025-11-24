@@ -14,6 +14,7 @@ class TradeController extends Controller
     private string $apiSecret;
     private string $passphrase;
     private string $baseUrl;
+    private int $maxRetries = 3;
 
     public function __construct()
     {
@@ -61,7 +62,7 @@ class TradeController extends Controller
         $validated = $validator->validated();
         $pair = strtoupper($validated['pair']);
 
-        // HANYA IZINKAN ENAUSDT
+        // HANYA IZINKAN PAIR YANG DIKONFIGURASI
         $allowedPair = config('bitget.allowed_pair', 'ENAUSDT');
         
         if ($pair !== $allowedPair) {
@@ -76,12 +77,14 @@ class TradeController extends Controller
                 'message' => "Bot hanya trading {$allowedPair}. Pair yang dikirim: {$pair}"
             ], 403);
         }
+
         $recommendation = $this->normalizeRecommendation($validated['recommendation']);
 
         Log::info('Signal received', [
             'pair' => $pair,
             'recommendation' => $recommendation,
-            'raw' => $validated['recommendation']
+            'raw' => $validated['recommendation'],
+            'price' => $validated['price'] ?? null,
         ]);
 
         // Skip jika neutral/hold
@@ -172,11 +175,14 @@ class TradeController extends Controller
             }
 
             // Tidak ada posisi, buka posisi baru
-            if ($usdtBalance < config('bitget.min_usdt_balance', 10)) {
+            $minUsdtRequired = config('bitget.min_usdt_balance', 10);
+            
+            if ($usdtBalance < $minUsdtRequired) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Insufficient USDT balance',
-                    'usdt_balance' => $usdtBalance
+                    'usdt_balance' => $usdtBalance,
+                    'required' => $minUsdtRequired
                 ], 400);
             }
 
@@ -209,9 +215,16 @@ class TradeController extends Controller
      */
     private function closePosition(string $pair, string $coin, float $balance): array
     {
-        $minSize = $this->getMinOrderSize($pair);
+        $symbolInfo = $this->getSymbolInfo($pair);
+        $minSize = $symbolInfo['minSize'] ?? $this->getMinOrderSize($pair);
         
         if ($balance < $minSize) {
+            Log::warning('Balance too low to close', [
+                'pair' => $pair,
+                'balance' => $balance,
+                'min_size' => $minSize
+            ]);
+            
             return [
                 'success' => false,
                 'action' => 'close',
@@ -219,22 +232,25 @@ class TradeController extends Controller
             ];
         }
 
+        $precision = $symbolInfo['quantityPrecision'] ?? 8;
+        $size = $this->formatSize($balance, $precision);
+
         $orderBody = [
             'symbol'    => $pair,
             'side'      => 'sell',
             'orderType' => 'market',
             'force'     => 'gtc',
-            'size'      => $this->formatSize($balance, $pair),
+            'size'      => $size,
             'clientOid' => $this->generateClientOid('close'),
         ];
 
-        $response = $this->executeOrder($orderBody);
+        $response = $this->executeOrderWithRetry($orderBody);
 
         return [
             'success' => $this->isSuccess($response),
             'action' => 'close',
             'pair' => $pair,
-            'size' => $balance,
+            'size' => $size,
             'response' => $response->json(),
             'timestamp' => now()->toIso8601String()
         ];
@@ -251,7 +267,7 @@ class TradeController extends Controller
         if ($tradeMode === 'fixed') {
             // Mode FIXED: Gunakan jumlah USDT tetap
             $usdtToUse = config('bitget.trade_fixed_usdt', 2);
-            
+
             // Validasi: pastikan balance cukup
             if ($usdtBalance < $usdtToUse) {
                 return [
@@ -279,7 +295,11 @@ class TradeController extends Controller
 
         // Hitung size coin yang akan dibeli
         $size = $usdtToUse / $currentPrice;
-        $minSize = $this->getMinOrderSize($pair);
+        
+        // Get symbol info untuk validasi
+        $symbolInfo = $this->getSymbolInfo($pair);
+        $minSize = $symbolInfo['minSize'] ?? $this->getMinOrderSize($pair);
+        $precision = $symbolInfo['quantityPrecision'] ?? 8;
 
         if ($size < $minSize) {
             return [
@@ -289,27 +309,64 @@ class TradeController extends Controller
             ];
         }
 
+        $formattedSize = $this->formatSize($size, $precision);
+
         $orderBody = [
             'symbol'    => $pair,
             'side'      => 'buy',
             'orderType' => 'market',
             'force'     => 'gtc',
-            'size'      => $this->formatSize($size, $pair),
+            'size'      => $formattedSize,
             'clientOid' => $this->generateClientOid('open'),
         ];
 
-        $response = $this->executeOrder($orderBody);
+        $response = $this->executeOrderWithRetry($orderBody);
 
         return [
             'success' => $this->isSuccess($response),
             'action' => 'open',
             'pair' => $pair,
-            'size' => $size,
+            'size' => $formattedSize,
             'usdt_used' => $usdtToUse,
             'price' => $currentPrice,
             'response' => $response->json(),
             'timestamp' => now()->toIso8601String()
         ];
+    }
+
+    /**
+     * Get symbol info dari Bitget API
+     */
+    private function getSymbolInfo(string $pair): array
+    {
+        $cacheKey = "symbol_info_{$pair}";
+        
+        return Cache::remember($cacheKey, 3600, function () use ($pair) {
+            try {
+                $response = Http::timeout(10)->get("{$this->baseUrl}/api/v2/spot/public/symbols", [
+                    'symbol' => $pair
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json('data');
+                    if (is_array($data) && count($data) > 0) {
+                        $symbol = $data[0];
+                        return [
+                            'minSize' => (float) ($symbol['minTradeAmount'] ?? 0),
+                            'quantityPrecision' => (int) ($symbol['quantityScale'] ?? 8),
+                            'pricePrecision' => (int) ($symbol['priceScale'] ?? 8),
+                        ];
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to get symbol info', [
+                    'pair' => $pair,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
+            return [];
+        });
     }
 
     /**
@@ -321,7 +378,7 @@ class TradeController extends Controller
             $cacheKey = "price_{$pair}";
             
             return Cache::remember($cacheKey, 5, function () use ($pair) {
-                $response = Http::get("{$this->baseUrl}/api/v2/spot/market/tickers", [
+                $response = Http::timeout(10)->get("{$this->baseUrl}/api/v2/spot/market/tickers", [
                     'symbol' => $pair
                 ]);
 
@@ -335,48 +392,110 @@ class TradeController extends Controller
                 return null;
             });
         } catch (\Throwable $e) {
-            Log::error('Failed to get current price', ['pair' => $pair, 'error' => $e->getMessage()]);
+            Log::error('Failed to get current price', [
+                'pair' => $pair,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }
 
     /**
-     * Dapatkan available balance
+     * Dapatkan available balance dengan retry
      */
     private function getAvailableBalance(string $coin): float
     {
-        $timestamp = (string) round(microtime(true) * 1000);
-        $requestPath = '/api/v2/spot/account/assets';
-        $method = 'GET';
-        $query = http_build_query(['coin' => $coin]);
+        $attempt = 0;
+        $lastError = null;
 
-        $preSign = $timestamp . strtoupper($method) . $requestPath . '?' . $query;
-        $sign = base64_encode(hash_hmac('sha256', $preSign, $this->apiSecret, true));
+        while ($attempt < $this->maxRetries) {
+            try {
+                $timestamp = (string) round(microtime(true) * 1000);
+                $requestPath = '/api/v2/spot/account/assets';
+                $method = 'GET';
+                $query = http_build_query(['coin' => $coin]);
 
-        $response = Http::withHeaders([
-            'ACCESS-KEY'        => $this->apiKey,
-            'ACCESS-SIGN'       => $sign,
-            'ACCESS-TIMESTAMP'  => $timestamp,
-            'ACCESS-PASSPHRASE' => $this->passphrase,
-            'Content-Type'      => 'application/json',
-        ])->get($this->baseUrl . $requestPath . '?' . $query);
+                $preSign = $timestamp . strtoupper($method) . $requestPath . '?' . $query;
+                $sign = base64_encode(hash_hmac('sha256', $preSign, $this->apiSecret, true));
 
-        if (!$response->successful()) {
-            Log::warning('Balance check failed', [
-                'coin' => $coin,
-                'status' => $response->status(),
-                'response' => $response->body()
-            ]);
-            return 0.0;
+                $response = Http::timeout(15)->withHeaders([
+                    'ACCESS-KEY'        => $this->apiKey,
+                    'ACCESS-SIGN'       => $sign,
+                    'ACCESS-TIMESTAMP'  => $timestamp,
+                    'ACCESS-PASSPHRASE' => $this->passphrase,
+                    'Content-Type'      => 'application/json',
+                ])->get($this->baseUrl . $requestPath . '?' . $query);
+
+                if ($response->successful()) {
+                    $data = $response->json('data');
+                    
+                    if (is_array($data) && count($data) > 0) {
+                        return (float) ($data[0]['available'] ?? 0.0);
+                    }
+                    
+                    return 0.0;
+                }
+
+                $lastError = "HTTP {$response->status()}: {$response->body()}";
+                
+            } catch (\Throwable $e) {
+                $lastError = $e->getMessage();
+            }
+
+            $attempt++;
+            if ($attempt < $this->maxRetries) {
+                usleep(500000); // 500ms delay
+            }
         }
 
-        $data = $response->json('data');
-        
-        if (is_array($data) && count($data) > 0) {
-            return (float) ($data[0]['available'] ?? 0.0);
-        }
+        Log::warning('Failed to get balance after retries', [
+            'coin' => $coin,
+            'attempts' => $this->maxRetries,
+            'last_error' => $lastError
+        ]);
 
         return 0.0;
+    }
+
+    /**
+     * Execute order dengan retry mechanism
+     */
+    private function executeOrderWithRetry(array $body): Response
+    {
+        $attempt = 0;
+        $lastResponse = null;
+
+        while ($attempt < $this->maxRetries) {
+            try {
+                $response = $this->executeOrder($body);
+                
+                if ($this->isSuccess($response)) {
+                    return $response;
+                }
+
+                // Jika error bukan network issue, jangan retry
+                $errorCode = $response->json('code');
+                if (in_array($errorCode, ['40015', '40016', '40017'])) {
+                    // Balance/size errors - jangan retry
+                    return $response;
+                }
+
+                $lastResponse = $response;
+                
+            } catch (\Throwable $e) {
+                Log::warning('Order execution failed, retrying...', [
+                    'attempt' => $attempt + 1,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
+            $attempt++;
+            if ($attempt < $this->maxRetries) {
+                sleep(1); // 1 second delay
+            }
+        }
+
+        return $lastResponse ?? Http::response(['error' => 'Max retries reached'], 500);
     }
 
     /**
@@ -394,7 +513,7 @@ class TradeController extends Controller
 
         Log::info('Executing order', ['body' => $body]);
 
-        $response = Http::withHeaders([
+        $response = Http::timeout(30)->withHeaders([
             'ACCESS-KEY'        => $this->apiKey,
             'ACCESS-SIGN'       => $sign,
             'ACCESS-TIMESTAMP'  => $timestamp,
@@ -432,8 +551,8 @@ class TradeController extends Controller
         $normalized = strtoupper(trim($rec));
         
         return match ($normalized) {
-            'BUY', 'STRONG BUY' => 'buy',
-            'SELL', 'STRONG SELL' => 'sell',
+            'BUY', 'STRONG BUY', 'STRONG_BUY' => 'buy',
+            'SELL', 'STRONG SELL', 'STRONG_SELL' => 'sell',
             'NEUTRAL', 'HOLD' => 'neutral',
             default => 'neutral',
         };
@@ -456,17 +575,15 @@ class TradeController extends Controller
     }
 
     /**
-     * Format size sesuai dengan presisi pair
+     * Format size sesuai dengan presisi
      */
-    private function formatSize(float $size, string $pair): string
+    private function formatSize(float $size, int $precision): string
     {
-        // Default 8 decimal places, adjust per pair if needed
-        $precision = config("bitget.pairs.{$pair}.precision", 8);
         return rtrim(rtrim(number_format($size, $precision, '.', ''), '0'), '.');
     }
 
     /**
-     * Dapatkan minimum order size
+     * Dapatkan minimum order size dari config
      */
     private function getMinOrderSize(string $pair): float
     {
@@ -478,13 +595,26 @@ class TradeController extends Controller
      */
     public function status()
     {
+        $allowedPair = config('bitget.allowed_pair');
+        $tradeMode = config('bitget.trade_mode');
+        
+        $config = [
+            'base_url' => $this->baseUrl,
+            'api_key_configured' => !empty($this->apiKey),
+            'allowed_pair' => $allowedPair,
+            'trade_mode' => $tradeMode,
+        ];
+
+        if ($tradeMode === 'fixed') {
+            $config['trade_fixed_usdt'] = config('bitget.trade_fixed_usdt');
+        } else {
+            $config['trade_percent'] = config('bitget.trade_percent');
+        }
+
         return response()->json([
             'status' => 'online',
             'timestamp' => now()->toIso8601String(),
-            'config' => [
-                'base_url' => $this->baseUrl,
-                'api_key_configured' => !empty($this->apiKey),
-            ]
+            'config' => $config
         ]);
     }
 
@@ -493,7 +623,7 @@ class TradeController extends Controller
      */
     public function balance(Request $request)
     {
-        $coin = $request->input('coin', 'USDT');
+        $coin = strtoupper($request->input('coin', 'USDT'));
         $balance = $this->getAvailableBalance($coin);
 
         return response()->json([
@@ -501,5 +631,20 @@ class TradeController extends Controller
             'available' => $balance,
             'timestamp' => now()->toIso8601String()
         ]);
+    }
+
+    /**
+     * Endpoint untuk testing signal
+     */
+    public function testSignal(Request $request)
+    {
+        $pair = $request->input('pair', config('bitget.allowed_pair'));
+        $recommendation = $request->input('recommendation', 'buy');
+
+        return $this->handleSignal($request->merge([
+            'pair' => $pair,
+            'recommendation' => $recommendation,
+            'timestamp' => time()
+        ]));
     }
 }
