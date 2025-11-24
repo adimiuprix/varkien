@@ -26,7 +26,7 @@ return [
     'allowed_pair' => env('BITGET_ALLOWED_PAIR', 'ENAUSDT'),
 
     // Persentase balance USDT yang digunakan untuk trading (1-100)
-    'trade_percent' => env('BITGET_TRADE_PERCENT', 95),
+    'trade_percent' => env('BITGET_TRADE_PERCENT', 30),
 
     // Minimum balance USDT yang harus ada
     'min_usdt_balance' => env('BITGET_MIN_USDT_BALANCE', 10),
@@ -43,7 +43,7 @@ return [
 
     'pairs' => [
         'ENAUSDT' => [
-            'min_size' => 3.84,
+            'min_size' => 1.50,
             'precision' => 4,
         ],
     ],
