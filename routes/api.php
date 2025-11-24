@@ -15,4 +15,4 @@ Route::apiResource('pustaka', PustakaController::class);
 Route::post('buang', [PustakaController::class, 'buangData']);
 Route::post('buang', [PustakaController::class, 'buangData']);
 
-Route::post('/signal', [TradeController::class, 'signalTrade']);
+Route::post('/signal', [TradeController::class, 'handleSignal']);
