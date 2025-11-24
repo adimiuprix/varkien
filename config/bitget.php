@@ -23,7 +23,7 @@ return [
     */
 
     // Pair yang diizinkan untuk trading (HANYA SATU PAIR)
-    'allowed_pair' => env('BITGET_ALLOWED_PAIR', 'TAOUSDT'),
+    'allowed_pair' => env('BITGET_ALLOWED_PAIR', 'ENAUSDT'),
 
     // Persentase balance USDT yang digunakan untuk trading (1-100)
     'trade_percent' => env('BITGET_TRADE_PERCENT', 95),
@@ -42,8 +42,8 @@ return [
     */
 
     'pairs' => [
-        'TAOUSDT' => [
-            'min_size' => 0.01,
+        'ENAUSDT' => [
+            'min_size' => 3.84,
             'precision' => 4,
         ],
     ],

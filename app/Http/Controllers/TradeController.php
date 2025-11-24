@@ -61,8 +61,8 @@ class TradeController extends Controller
         $validated = $validator->validated();
         $pair = strtoupper($validated['pair']);
 
-        // HANYA IZINKAN TAOUSDT
-        $allowedPair = config('bitget.allowed_pair', 'TAOUSDT');
+        // HANYA IZINKAN ENAUSDT
+        $allowedPair = config('bitget.allowed_pair', 'ENAUSDT');
         
         if ($pair !== $allowedPair) {
             Log::warning('Pair not allowed', [
