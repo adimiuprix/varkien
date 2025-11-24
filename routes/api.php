@@ -7,7 +7,7 @@ use App\Http\Controllers\TradeController;
 Route::prefix('trade')->group(function () {
 
     // Handle Signal
-    Route::get('/signal', [TradeController::class, 'handleSignal'])
+    Route::post('/signal', [TradeController::class, 'handleSignal'])
         ->name('trade.signal');
     
     // Status check
