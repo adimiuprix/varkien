@@ -38,6 +38,22 @@ class TradeController extends Controller
         ]);
 
         $pair = strtoupper($validated['pair']);
+
+        // HANYA IZINKAN TAOUSDT
+        $allowedPair = config('bitget.allowed_pair', 'TAOUSDT');
+        
+        if ($pair !== $allowedPair) {
+            Log::warning('Pair not allowed', [
+                'received_pair' => $pair,
+                'allowed_pair' => $allowedPair
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Pair not allowed',
+                'message' => "Bot hanya trading {$allowedPair}. Pair yang dikirim: {$pair}"
+            ], 403);
+        }
         $recommendation = $this->normalizeRecommendation($validated['recommendation']);
 
         Log::info('Signal received', [
