@@ -261,8 +261,6 @@ class TradeController extends Controller
      */
     private function openPosition(string $pair, float $usdtBalance): array
     {
-        $fall = Log::info($usdtBalance);
-        dd($fall);
         // Mode trading: 'percentage' atau 'fixed'
         $tradeMode = config('bitget.trade_mode', 'fixed');
         
