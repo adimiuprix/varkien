@@ -232,7 +232,7 @@ class TradeController extends Controller
             ];
         }
 
-        $precision = $symbolInfo['quantityPrecision'] ?? 8;
+        $precision = $symbolInfo['quantityPrecision'] ?? 6;
         $size = $this->formatSize($balance, $precision);
 
         $orderBody = [
@@ -261,6 +261,8 @@ class TradeController extends Controller
      */
     private function openPosition(string $pair, float $usdtBalance): array
     {
+        $fall = Log::info($usdtBalance);
+        dd($fall);
         // Mode trading: 'percentage' atau 'fixed'
         $tradeMode = config('bitget.trade_mode', 'fixed');
         
@@ -299,7 +301,7 @@ class TradeController extends Controller
         // Get symbol info untuk validasi
         $symbolInfo = $this->getSymbolInfo($pair);
         $minSize = $symbolInfo['minSize'] ?? $this->getMinOrderSize($pair);
-        $precision = $symbolInfo['quantityPrecision'] ?? 8;
+        $precision = $symbolInfo['quantityPrecision'] ?? 6;
 
         if ($size < $minSize) {
             return [
@@ -353,8 +355,8 @@ class TradeController extends Controller
                         $symbol = $data[0];
                         return [
                             'minSize' => (float) ($symbol['minTradeAmount'] ?? 0),
-                            'quantityPrecision' => (int) ($symbol['quantityScale'] ?? 8),
-                            'pricePrecision' => (int) ($symbol['priceScale'] ?? 8),
+                            'quantityPrecision' => (int) ($symbol['quantityScale'] ?? 6),
+                            'pricePrecision' => (int) ($symbol['priceScale'] ?? 6),
                         ];
                     }
                 }
