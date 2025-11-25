@@ -579,7 +579,7 @@ class TradeController extends Controller
      */
     private function formatSize(float $size, int $precision): string
     {
-        return rtrim(rtrim(number_format($size, $precision, '.', ''), '0'), '.');
+        return number_format($size, $precision, '.', '');
     }
 
     /**
