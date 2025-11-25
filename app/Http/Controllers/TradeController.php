@@ -299,7 +299,7 @@ class TradeController extends Controller
         // Get symbol info untuk validasi
         $symbolInfo = $this->getSymbolInfo($pair);
         $minSize = $symbolInfo['minSize'] ?? $this->getMinOrderSize($pair);
-        $precision = $symbolInfo['quantityPrecision'] ?? 6;
+        $precision = $symbolInfo['quantityPrecision'];
 
         if ($size < $minSize) {
             return [
